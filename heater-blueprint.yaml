@@ -4,14 +4,14 @@ blueprint:
   description: >
     Lit le mode voulu depuis l'attribut 'fil_pilote_mode' du Schedule actif (Additional data).
     Si l'attribut est absent, applique un mode par défaut. Coupe le chauffage si la porte
-    reste ouverte > délai, et rétablit le mode à la fermeture.
+    reste ouverte > délai, et rétablit le mode à la fermeture, en tenant compte d'une
+    inhibition explicite via input_boolean.
   domain: automation
   source_url: https://example.local/blueprints/fil_pilote_schedule_attr_inhibition.yaml
 
   input:
     door_sensor:
       name: Capteur de porte
-      description: Binary sensor (on = ouvert, off = fermé)
       selector:
         entity:
           domain: binary_sensor
@@ -24,7 +24,6 @@ blueprint:
 
     schedule_entity:
       name: Schedule unique
-      description: Helper Schedule dont chaque plage peut porter 'fil_pilote_mode'
       selector:
         entity:
           domain: schedule
@@ -41,21 +40,19 @@ blueprint:
 
     default_mode_when_unspecified:
       name: Mode par défaut si la plage n'a pas 'fil_pilote_mode'
-      description: Ex. Comfort
-      default: "Eco"
+      default: "Comfort"
       selector:
         text:
 
     off_mode_during_open:
       name: Mode forcé quand porte ouverte > délai
-      description: Ex. Off
       default: "Off"
       selector:
         text:
 
     inhibition_helper:
-      name: Interrupteur d'inhibition (porte ouverte)
-      description: input_boolean qui indique l'inhibition pendant l'ouverture prolongée
+      name: Interrupteur d'inhibition (porte ouverte prolongée)
+      description: Sélectionne l'input_boolean d'inhibition (ex. input_boolean.sdb_inhibition_porte)
       selector:
         entity:
           domain: input_boolean
@@ -67,15 +64,12 @@ variables:
   open_delay_minutes: !input open_delay_minutes
   default_mode_when_unspecified: !input default_mode_when_unspecified
   off_mode_during_open: !input off_mode_during_open
+  inhibition_helper: !input inhibition_helper
 
   # Mode "voulu" : attribut 'fil_pilote_mode' du Schedule si présent, sinon défaut.
   wanted_mode: >
     {% set mode_attr = state_attr(schedule_entity, 'fil_pilote_mode') %}
     {{ (mode_attr if mode_attr is string and mode_attr|length > 0 else default_mode_when_unspecified) }}
-
-
-  # Inhibition (helper)
-  inhibition_helper: !input inhibition_helper
 
 trigger:
   - id: schedule_changed
@@ -102,7 +96,7 @@ condition: []
 
 action:
   - choose:
-      # 1) Porte ouverte > délai -> forcer le mode d'ouverture (Off par défaut)
+      # 1) Porte ouverte > délai -> activer inhibition + appliquer mode coupure
       - conditions:
           - condition: trigger
             id: door_open_long
@@ -121,15 +115,7 @@ action:
               message: "Porte ouverte > {{ open_delay_minutes }} min → fil pilote: {{ off_mode_during_open }}"
               notification_id: "sdb_fp_inhibition"
 
-          # (facultatif) log
-          - service: persistent_notification.create
-            data:
-              title: "Inhibition porte ouverte"
-              message: "Porte ouverte > {{ open_delay_minutes }} min → fil pilote: {{ off_mode_during_open }}"
-              notification_id: "sdb_fp_inhibition"
-
-
-      # 2) Porte refermée -> réappliquer le mode voulu (fil_pilote_mode ou défaut)
+      # 2) Porte refermée -> désactiver inhibition + réappliquer le mode voulu
       - conditions:
           - condition: trigger
             id: door_closed
@@ -138,9 +124,11 @@ action:
             target:
               entity_id: !input inhibition_helper
 
+          # Petit délai pour laisser HA stabiliser l'état/attributs du Schedule
           - delay:
               seconds: 1.5
 
+          # Si le schedule est 'on', on relit l'attribut; sinon, on applique le mode défaut
           - service: select.select_option
             target:
               entity_id: !input fil_pilote_select
@@ -160,7 +148,7 @@ action:
               notification_id: "sdb_fp_inhibition"
 
       # 3) Schedule change / démarrage / reload -> appliquer le mode voulu
-      #    ... sauf si la porte est déjà ouverte au-delà du délai.
+      #    ... uniquement si pas d'inhibition ET si la porte n'est pas ouverte au-delà du délai.
       - conditions:
           - condition: or
             conditions:
@@ -170,12 +158,13 @@ action:
                 id: ha_start
               - condition: trigger
                 id: automations_reloaded
+
+          # Ne pas écraser si inhibition active
           - condition: state
             entity_id: !input inhibition_helper
-            state: "off"                
-          - condition: state
-            entity_id: "{{ inhibition_helper }}"
             state: "off"
+
+          # Si porte ouverte, ne pas appliquer si elle l'est depuis plus que le délai
           - condition: template
             value_template: >
               {% set is_open = is_state(door_sensor, 'on') %}
