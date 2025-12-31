@@ -41,44 +41,44 @@ blueprint:
     mode_when_on:
       name: Mode quand Schedule = ON
       description: Option exacte du select (ex. Comfort)
-      default: Comfort
+      default: "Comfort"
       selector:
         select:
           options:
-            - Comfort
-            - Eco
-            - Off
-            - FrostProtection
-            - ComfortMinus1
-            - ComfortMinus2
+            - "Comfort"
+            - "Eco"
+            - "Off"
+            - "FrostProtection"
+            - "ComfortMinus1"
+            - "ComfortMinus2"
 
     mode_when_off:
       name: Mode quand Schedule = OFF
       description: Option exacte du select (ex. Eco)
-      default: Eco
+      default: "Eco"
       selector:
         select:
           options:
-            - Comfort
-            - Eco
-            - Off
-            - FrostProtection
-            - ComfortMinus1
-            - ComfortMinus2
+            - "Comfort"
+            - "Eco"
+            - "Off"
+            - "FrostProtection"
+            - "ComfortMinus1"
+            - "ComfortMinus2"
 
     off_mode_during_open:
       name: Mode forcé quand porte ouverte > délai
       description: Option exacte du select (ex. Off)
-      default: Off
+      default: "Off"
       selector:
         select:
           options:
-            - Off
-            - Eco
-            - Comfort
-            - FrostProtection
-            - ComfortMinus1
-            - ComfortMinus2
+            - "Off"
+            - "Eco"
+            - "Comfort"
+            - "FrostProtection"
+            - "ComfortMinus1"
+            - "ComfortMinus2"
 
 variables:
   door_sensor: !input door_sensor
