@@ -1,12 +1,11 @@
 
 blueprint:
-  name: Fil pilote SDB — Planification + Inhibition porte
+  name: Fil pilote — Planification (Schedule) + Inhibition porte
   description: >
-    Applique un mode de fil pilote selon un Schedule (ON/OFF) et coupe le chauffage
-    si la porte reste ouverte plus de X minutes. À la fermeture, le mode est rétabli
-    selon l'état du Schedule.
+    Applique un mode de fil pilote selon un Schedule (ON/OFF), coupe le chauffage
+    si la porte reste ouverte plus que le délai, et rétablit le mode à la fermeture.
   domain: automation
-  source_url: https://example.local/blueprints/fil-pilote-sdb-planif-inhibition.yaml
+  source_url: https://example.local/blueprints/fil-pilote-planif-inhibition.yaml
   input:
     door_sensor:
       name: Capteur de porte
@@ -14,28 +13,31 @@ blueprint:
       selector:
         entity:
           domain: binary_sensor
+
     fil_pilote_select:
-      name: Select fil pilote Nodon
-      description: Entité select du module SIN-4-FP-21
+      name: Select du fil pilote (Nodon SIN-4-FP-21)
       selector:
         entity:
           domain: select
+
     schedule_entity:
       name: Schedule (helper)
-      description: Entité du helper 'Schedule' qui bascule ON/OFF selon les créneaux
+      description: Entité du helper 'Schedule' (ON = mode ON, OFF = mode OFF)
       selector:
         entity:
           domain: schedule
+
     open_delay_minutes:
       name: Délai d'ouverture avant coupure
-      description: Minutes d'ouverture continue de la porte avant de couper (anti-flapping)
+      description: Minutes d'ouverture continue de la porte avant de couper
       default: 2
       selector:
         number:
           min: 1
-          max: 30
+          max: 60
           step: 1
           mode: slider
+
     mode_when_on:
       name: Mode quand Schedule = ON
       description: Option exacte du select (ex. Comfort)
@@ -49,6 +51,7 @@ blueprint:
             - FrostProtection
             - ComfortMinus1
             - ComfortMinus2
+
     mode_when_off:
       name: Mode quand Schedule = OFF
       description: Option exacte du select (ex. Eco)
@@ -62,6 +65,7 @@ blueprint:
             - FrostProtection
             - ComfortMinus1
             - ComfortMinus2
+
     off_mode_during_open:
       name: Mode forcé quand porte ouverte > délai
       description: Option exacte du select (ex. Off)
@@ -85,100 +89,113 @@ variables:
   mode_when_off: !input mode_when_off
   off_mode_during_open: !input off_mode_during_open
 
-# ⚙️ Automatisation 1 — Appliquer le mode du Schedule (si pas d'ouverture prolongée)
 trigger:
-  - platform: state
+  - id: schedule_changed
+    platform: state
     entity_id: !input schedule_entity
-  - platform: homeassistant
-    event: start
-  - platform: event
-    event_type: automation_reloaded
-
-condition:
-  # Si la porte est ouverte, on vérifie qu'elle ne l'est PAS depuis plus que le délai autorisé.
-  - condition: template
-    value_template: >
-      {% set is_open = is_state(door_sensor, 'on') %}
-      {% set open_for = (as_timestamp(now()) - as_timestamp(states[door_sensor].last_changed)) %}
-      {% if not is_open %}
-        true
-      {% else %}
-        {{ open_for < (open_delay_minutes | int * 60) }}
-      {% endif %}
-
-action:
-  - choose:
-      - conditions:
-          - condition: state
-            entity_id: !input schedule_entity
-            state: "on"
-        sequence:
-          - service: select.select_option
-            target:
-              entity_id: !input fil_pilote_select
-            data:
-              option: "{{ mode_when_on }}"
-      - conditions:
-          - condition: state
-            entity_id: !input schedule_entity
-            state: "off"
-        sequence:
-          - service: select.select_option
-            target:
-              entity_id: !input fil_pilote_select
-            data:
-              option: "{{ mode_when_off }}"
-    default: []
-mode: restart
-
-# ⚙️ Automatisation 2 — Porte ouverte > délai → couper (off_mode_during_open)
-# On crée une seconde sequence via "parallel" pour porter les deux workflows dans un blueprint.
-# Home Assistant n'autorise pas deux blocs 'automation' dans un même blueprint, donc on fait des triggers multiples.
-# NB: L'action suivante ne s'exécute que sur état 'on' pendant le délai spécifié.
-trigger:
-  - platform: state
+  - id: door_open_long
+    platform: state
     entity_id: !input door_sensor
     to: "on"
     for:
       minutes: !input open_delay_minutes
-
-condition: []
-action:
-  - service: select.select_option
-    target:
-      entity_id: !input fil_pilote_select
-    data:
-      option: "{{ off_mode_during_open }}"
-mode: restart
-
-# ⚙️ Automatisation 3 — Porte refermée → rétablir le mode du Schedule
-trigger:
-  - platform: state
+  - id: door_closed
+    platform: state
     entity_id: !input door_sensor
     to: "off"
+  - id: ha_start
+    platform: homeassistant
+    event: start
+  - id: automations_reloaded
+    platform: event
+    event_type: automation_reloaded
 
 condition: []
+
 action:
   - choose:
+      # 1) Porte ouverte > délai → forcer le mode 'off_mode_during_open'
       - conditions:
-          - condition: state
-            entity_id: !input schedule_entity
-            state: "on"
+          - condition: trigger
+            id: door_open_long
         sequence:
           - service: select.select_option
             target:
               entity_id: !input fil_pilote_select
             data:
-              option: "{{ mode_when_on }}"
+              option: "{{ off_mode_during_open }}"
+
+      # 2) Porte refermée → réappliquer le mode du Schedule
       - conditions:
-          - condition: state
-            entity_id: !input schedule_entity
-            state: "off"
+          - condition: trigger
+            id: door_closed
         sequence:
-          - service: select.select_option
-            target:
-              entity_id: !input fil_pilote_select
-            data:
-              option: "{{ mode_when_off }}"
-    default: []
+          - choose:
+              - conditions:
+                  - condition: state
+                    entity_id: !input schedule_entity
+                    state: "on"
+                sequence:
+                  - service: select.select_option
+                    target:
+                      entity_id: !input fil_pilote_select
+                    data:
+                      option: "{{ mode_when_on }}"
+              - conditions:
+                  - condition: state
+                    entity_id: !input schedule_entity
+                    state: "off"
+                sequence:
+                  - service: select.select_option
+                    target:
+                      entity_id: !input fil_pilote_select
+                    data:
+                      option: "{{ mode_when_off }}"
+            default: []
+
+      # 3) Schedule change / HA start / reload → appliquer le mode
+      #    ... mais seulement si la porte n'est PAS ouverte depuis plus que le délai.
+      - conditions:
+          - condition: or
+            conditions:
+              - condition: trigger
+                id: schedule_changed
+              - condition: trigger
+                id: ha_start
+              - condition: trigger
+                id: automations_reloaded
+          - condition: template
+            value_template: >
+              {% set is_open = is_state(door_sensor, 'on') %}
+              {% if not is_open %}
+                true
+              {% else %}
+                {# On compare la durée d'ouverture courante au délai #}
+                {% set since = (now() - states[door_sensor].last_changed).total_seconds() | int %}
+                {{ since < (open_delay_minutes | int * 60) }}
+              {% endif %}
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: state
+                    entity_id: !input schedule_entity
+                    state: "on"
+                sequence:
+                  - service: select.select_option
+                    target:
+                      entity_id: !input fil_pilote_select
+                    data:
+                      option: "{{ mode_when_on }}"
+              - conditions:
+                  - condition: state
+                    entity_id: !input schedule_entity
+                    state: "off"
+                sequence:
+                  - service: select.select_option
+                    target:
+                      entity_id: !input fil_pilote_select
+                    data:
+                      option: "{{ mode_when_off }}"
+            default: []
+
 mode: restart
