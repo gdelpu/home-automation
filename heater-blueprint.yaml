@@ -45,12 +45,18 @@ blueprint:
       selector:
         select:
           options:
-            - "Comfort"
-            - "Eco"
-            - "Off"
-            - "FrostProtection"
-            - "ComfortMinus1"
-            - "ComfortMinus2"
+            - label: "Comfort"
+              value: "Comfort"
+            - label: "Eco"
+              value: "Eco"
+            - label: "Off"
+              value: "Off"
+            - label: "FrostProtection"
+              value: "FrostProtection"
+            - label: "ComfortMinus1"
+              value: "ComfortMinus1"
+            - label: "ComfortMinus2"
+              value: "ComfortMinus2"
 
     mode_when_off:
       name: Mode quand Schedule = OFF
@@ -59,12 +65,18 @@ blueprint:
       selector:
         select:
           options:
-            - "Comfort"
-            - "Eco"
-            - "Off"
-            - "FrostProtection"
-            - "ComfortMinus1"
-            - "ComfortMinus2"
+            - label: "Comfort"
+              value: "Comfort"
+            - label: "Eco"
+              value: "Eco"
+            - label: "Off"
+              value: "Off"
+            - label: "FrostProtection"
+              value: "FrostProtection"
+            - label: "ComfortMinus1"
+              value: "ComfortMinus1"
+            - label: "ComfortMinus2"
+              value: "ComfortMinus2"
 
     off_mode_during_open:
       name: Mode forcé quand porte ouverte > délai
@@ -73,12 +85,18 @@ blueprint:
       selector:
         select:
           options:
-            - "Off"
-            - "Eco"
-            - "Comfort"
-            - "FrostProtection"
-            - "ComfortMinus1"
-            - "ComfortMinus2"
+            - label: "Off"
+              value: "Off"
+            - label: "Eco"
+              value: "Eco"
+            - label: "Comfort"
+              value: "Comfort"
+            - label: "FrostProtection"
+              value: "FrostProtection"
+            - label: "ComfortMinus1"
+              value: "ComfortMinus1"
+            - label: "ComfortMinus2"
+              value: "ComfortMinus2"
 
 variables:
   door_sensor: !input door_sensor
@@ -154,7 +172,7 @@ action:
             default: []
 
       # 3) Schedule change / HA start / reload → appliquer le mode
-      #    ... mais seulement si la porte n'est PAS ouverte depuis plus que le délai.
+      #    ... mais seulement si la porte n'est pas ouverte au-delà du délai.
       - conditions:
           - condition: or
             conditions:
