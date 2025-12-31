@@ -1,11 +1,13 @@
 
 blueprint:
-  name: Fil pilote — Planification (Schedule) + Inhibition porte
+  name: Fil pilote — Schedule (données avancées) + Inhibition porte
   description: >
-    Applique un mode de fil pilote selon un Schedule (ON/OFF), coupe le chauffage
-    si la porte reste ouverte plus que le délai, et rétablit le mode à la fermeture.
+    Lit le mode voulu depuis l'attribut 'fil_pilote_mode' du Schedule actif (Additional data).
+    Si l'attribut est absent, applique un mode par défaut. Coupe le chauffage si la porte
+    reste ouverte > délai, et rétablit le mode à la fermeture.
   domain: automation
-  source_url: https://example.local/blueprints/fil-pilote-planif-inhibition.yaml
+  source_url: https://example.local/blueprints/fil_pilote_schedule_attr_inhibition.yaml
+
   input:
     door_sensor:
       name: Capteur de porte
@@ -21,15 +23,14 @@ blueprint:
           domain: select
 
     schedule_entity:
-      name: Schedule (helper)
-      description: Entité du helper 'Schedule' (ON = mode ON, OFF = mode OFF)
+      name: Schedule unique
+      description: Helper Schedule dont chaque plage peut porter 'fil_pilote_mode'
       selector:
         entity:
           domain: schedule
 
     open_delay_minutes:
       name: Délai d'ouverture avant coupure
-      description: Minutes d'ouverture continue de la porte avant de couper
       default: 2
       selector:
         number:
@@ -38,74 +39,32 @@ blueprint:
           step: 1
           mode: slider
 
-    mode_when_on:
-      name: Mode quand Schedule = ON
-      description: Option exacte du select (ex. Comfort)
+    default_mode_when_unspecified:
+      name: Mode par défaut si la plage n'a pas 'fil_pilote_mode'
+      description: Ex. Comfort
       default: "Comfort"
       selector:
-        select:
-          options:
-            - label: "Comfort"
-              value: "Comfort"
-            - label: "Eco"
-              value: "Eco"
-            - label: "Off"
-              value: "Off"
-            - label: "FrostProtection"
-              value: "FrostProtection"
-            - label: "ComfortMinus1"
-              value: "ComfortMinus1"
-            - label: "ComfortMinus2"
-              value: "ComfortMinus2"
-
-    mode_when_off:
-      name: Mode quand Schedule = OFF
-      description: Option exacte du select (ex. Eco)
-      default: "Eco"
-      selector:
-        select:
-          options:
-            - label: "Comfort"
-              value: "Comfort"
-            - label: "Eco"
-              value: "Eco"
-            - label: "Off"
-              value: "Off"
-            - label: "FrostProtection"
-              value: "FrostProtection"
-            - label: "ComfortMinus1"
-              value: "ComfortMinus1"
-            - label: "ComfortMinus2"
-              value: "ComfortMinus2"
+        text:
 
     off_mode_during_open:
       name: Mode forcé quand porte ouverte > délai
-      description: Option exacte du select (ex. Off)
+      description: Ex. Off
       default: "Off"
       selector:
-        select:
-          options:
-            - label: "Off"
-              value: "Off"
-            - label: "Eco"
-              value: "Eco"
-            - label: "Comfort"
-              value: "Comfort"
-            - label: "FrostProtection"
-              value: "FrostProtection"
-            - label: "ComfortMinus1"
-              value: "ComfortMinus1"
-            - label: "ComfortMinus2"
-              value: "ComfortMinus2"
+        text:
 
 variables:
   door_sensor: !input door_sensor
   fil_pilote_select: !input fil_pilote_select
   schedule_entity: !input schedule_entity
   open_delay_minutes: !input open_delay_minutes
-  mode_when_on: !input mode_when_on
-  mode_when_off: !input mode_when_off
+  default_mode_when_unspecified: !input default_mode_when_unspecified
   off_mode_during_open: !input off_mode_during_open
+
+  # Mode "voulu" : attribut 'fil_pilote_mode' du Schedule si présent, sinon défaut.
+  wanted_mode: >
+    {% set mode_attr = state_attr(schedule_entity, 'fil_pilote_mode') %}
+    {{ (mode_attr if mode_attr is string and mode_attr|length > 0 else default_mode_when_unspecified) }}
 
 trigger:
   - id: schedule_changed
@@ -132,7 +91,7 @@ condition: []
 
 action:
   - choose:
-      # 1) Porte ouverte > délai → forcer le mode 'off_mode_during_open'
+      # 1) Porte ouverte > délai -> forcer le mode d'ouverture (Off par défaut)
       - conditions:
           - condition: trigger
             id: door_open_long
@@ -143,36 +102,19 @@ action:
             data:
               option: "{{ off_mode_during_open }}"
 
-      # 2) Porte refermée → réappliquer le mode du Schedule
+      # 2) Porte refermée -> réappliquer le mode voulu (fil_pilote_mode ou défaut)
       - conditions:
           - condition: trigger
             id: door_closed
         sequence:
-          - choose:
-              - conditions:
-                  - condition: state
-                    entity_id: !input schedule_entity
-                    state: "on"
-                sequence:
-                  - service: select.select_option
-                    target:
-                      entity_id: !input fil_pilote_select
-                    data:
-                      option: "{{ mode_when_on }}"
-              - conditions:
-                  - condition: state
-                    entity_id: !input schedule_entity
-                    state: "off"
-                sequence:
-                  - service: select.select_option
-                    target:
-                      entity_id: !input fil_pilote_select
-                    data:
-                      option: "{{ mode_when_off }}"
-            default: []
+          - service: select.select_option
+            target:
+              entity_id: !input fil_pilote_select
+            data:
+              option: "{{ wanted_mode }}"
 
-      # 3) Schedule change / HA start / reload → appliquer le mode
-      #    ... mais seulement si la porte n'est pas ouverte au-delà du délai.
+      # 3) Schedule change / démarrage / reload -> appliquer le mode voulu
+      #    ... sauf si la porte est déjà ouverte au-delà du délai.
       - conditions:
           - condition: or
             conditions:
@@ -188,32 +130,15 @@ action:
               {% if not is_open %}
                 true
               {% else %}
-                {# On compare la durée d'ouverture courante au délai #}
                 {% set since = (now() - states[door_sensor].last_changed).total_seconds() | int %}
                 {{ since < (open_delay_minutes | int * 60) }}
               {% endif %}
         sequence:
-          - choose:
-              - conditions:
-                  - condition: state
-                    entity_id: !input schedule_entity
-                    state: "on"
-                sequence:
-                  - service: select.select_option
-                    target:
-                      entity_id: !input fil_pilote_select
-                    data:
-                      option: "{{ mode_when_on }}"
-              - conditions:
-                  - condition: state
-                    entity_id: !input schedule_entity
-                    state: "off"
-                sequence:
-                  - service: select.select_option
-                    target:
-                      entity_id: !input fil_pilote_select
-                    data:
-                      option: "{{ mode_when_off }}"
-            default: []
+          - service: select.select_option
+            target:
+              entity_id: !input fil_pilote_select
+            data:
+              option: "{{ wanted_mode }}"
+    default: []
 
 mode: restart
