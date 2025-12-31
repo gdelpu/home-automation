@@ -42,7 +42,7 @@ blueprint:
     default_mode_when_unspecified:
       name: Mode par défaut si la plage n'a pas 'fil_pilote_mode'
       description: Ex. Comfort
-      default: "Comfort"
+      default: "Eco"
       selector:
         text:
 
@@ -52,6 +52,13 @@ blueprint:
       default: "Off"
       selector:
         text:
+
+    inhibition_helper:
+      name: Interrupteur d'inhibition (porte ouverte)
+      description: input_boolean qui indique l'inhibition pendant l'ouverture prolongée
+      selector:
+        entity:
+          domain: input_boolean
 
 variables:
   door_sensor: !input door_sensor
@@ -68,7 +75,7 @@ variables:
 
 
   # Inhibition (helper)
-  inhibition_helper: input_boolean.sdb_inhibition_porte
+  inhibition_helper: !input inhibition_helper
 
 trigger:
   - id: schedule_changed
@@ -102,12 +109,17 @@ action:
         sequence:
           - service: input_boolean.turn_on
             target:
-              entity_id: "{{ inhibition_helper }}"
+              entity_id: !input inhibition_helper
           - service: select.select_option
             target:
               entity_id: !input fil_pilote_select
             data:
               option: "{{ off_mode_during_open }}"
+          - service: persistent_notification.create
+            data:
+              title: "Inhibition porte ouverte"
+              message: "Porte ouverte > {{ open_delay_minutes }} min → fil pilote: {{ off_mode_during_open }}"
+              notification_id: "sdb_fp_inhibition"
 
           # (facultatif) log
           - service: persistent_notification.create
@@ -118,20 +130,17 @@ action:
 
 
       # 2) Porte refermée -> réappliquer le mode voulu (fil_pilote_mode ou défaut)
-
       - conditions:
           - condition: trigger
             id: door_closed
         sequence:
           - service: input_boolean.turn_off
             target:
-              entity_id: "{{ inhibition_helper }}"
+              entity_id: !input inhibition_helper
 
-          # Petit délai pour laisser HA stabiliser l'état/attributs du Schedule
           - delay:
               seconds: 1.5
 
-          # Double vérification : si le schedule est 'on', on relit l'attribut; sinon, on applique le mode défaut
           - service: select.select_option
             target:
               entity_id: !input fil_pilote_select
@@ -143,13 +152,11 @@ action:
                   {{ default_mode_when_unspecified }}
                 {% endif %}
 
-          # (facultatif) log
           - service: persistent_notification.create
             data:
               title: "Fin inhibition, porte fermée"
               message: >
-                Schedule={{ states(schedule_entity) }} | mode voulu={{ wanted_mode }} |
-                mode appliqué={{ 'wanted_mode' if is_state(schedule_entity,'on') else default_mode_when_unspecified }}
+                Schedule={{ states(schedule_entity) }} | mode voulu={{ wanted_mode }}
               notification_id: "sdb_fp_inhibition"
 
       # 3) Schedule change / démarrage / reload -> appliquer le mode voulu
@@ -163,6 +170,9 @@ action:
                 id: ha_start
               - condition: trigger
                 id: automations_reloaded
+          - condition: state
+            entity_id: !input inhibition_helper
+            state: "off"                
           - condition: state
             entity_id: "{{ inhibition_helper }}"
             state: "off"
