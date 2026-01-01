@@ -41,7 +41,6 @@ blueprint:
           step: 1
           mode: slider
 
-    # Sélecteurs "liste déroulante" pour les modes
     default_mode_when_unspecified:
       name: Mode par défaut (si la plage n'indique pas 'fil_pilote_mode')
       description: Appliqué lorsque le Schedule est ON mais sans Additional data
@@ -106,11 +105,9 @@ variables:
   inhibition_helper: !input inhibition_helper
   away_selector: !input away_selector
 
-  # "away" actif ?
   away_active: >
     {{ is_state(away_selector, 'away') }}
 
-  # Mode voulu : attribut 'fil_pilote_mode' du Schedule si présent, sinon défaut.
   wanted_mode: >
     {% set mode_attr = state_attr(schedule_entity, 'fil_pilote_mode') %}
     {{ (mode_attr if mode_attr is string and mode_attr|length > 0 else default_mode_when_unspecified) }}
@@ -148,7 +145,7 @@ condition: []
 
 action:
   - choose:
-      # 0) Priorité absolue : "away" -> Off (et on ne laisse rien réécrire tant que away actif)
+      # 0) Priorité absolue : "away" -> Off
       - conditions:
           - condition: template
             value_template: "{{ away_active }}"
@@ -221,7 +218,6 @@ action:
             target:
               entity_id: !input inhibition_helper
 
-          # Délai court pour stabiliser l'attribut du Schedule
           - delay:
               seconds: 1.5
 
