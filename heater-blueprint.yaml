@@ -57,6 +57,13 @@ blueprint:
         entity:
           domain: input_boolean
 
+    away_selector:
+      name: Sélecteur de mode (présence/absence)
+      description: input_select dont la valeur "away" force le fil pilote à Off
+      selector:
+        entity:
+          domain: input_select          
+
 variables:
   door_sensor: !input door_sensor
   fil_pilote_select: !input fil_pilote_select
@@ -70,6 +77,14 @@ variables:
   wanted_mode: >
     {% set mode_attr = state_attr(schedule_entity, 'fil_pilote_mode') %}
     {{ (mode_attr if mode_attr is string and mode_attr|length > 0 else default_mode_when_unspecified) }}
+
+
+  away_selector: !input away_selector
+
+  # "away" actif ?
+  away_active: >
+    {{ is_state(away_selector, 'away') }}
+    
 
 trigger:
   - id: schedule_changed
@@ -91,11 +106,32 @@ trigger:
   - id: automations_reloaded
     platform: event
     event_type: automation_reloaded
+  - id: away_changed
+    platform: state
+    entity_id: !input away_selector
+    
 
 condition: []
 
 action:
   - choose:
+
+      # 0) Priorité absolue: mode "away" -> fil pilote Off
+      - conditions:
+          - condition: template
+            value_template: "{{ away_active }}"
+        sequence:
+          - service: select.select_option
+            target:
+              entity_id: !input fil_pilote_select
+            data:
+              option: "Off"
+          - service: persistent_notification.create
+            data:
+              title: "Absence (away) active"
+              message: "input_select.mode = away → fil pilote forcé à Off"
+              notification_id: "sdb_fp_away"
+  
       # 1) Porte ouverte > délai -> activer inhibition + appliquer mode coupure
       - conditions:
           - condition: trigger
@@ -119,6 +155,9 @@ action:
       - conditions:
           - condition: trigger
             id: door_closed
+          - condition: template
+            value_template: "{{ not away_active }}"
+            
         sequence:
           - service: input_boolean.turn_off
             target:
@@ -174,6 +213,11 @@ action:
                 {% set since = (now() - states[door_sensor].last_changed).total_seconds() | int %}
                 {{ since < (open_delay_minutes | int * 60) }}
               {% endif %}
+          
+          # Si mode "Away"
+          - condition: template
+            value_template: "{{ not away_active }}"
+              
         sequence:
           - service: select.select_option
             target:
