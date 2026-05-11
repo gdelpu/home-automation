@@ -1,0 +1,167 @@
+blueprint:
+  name: "Présence (UniFi Wi‑Fi + Porte) — 1 personne"
+  description: >
+    Met à jour l'état d'une personne (person.*) en se basant sur un device_tracker (UniFi)
+    et la récente activité d'une porte (capteur d'ouverture). Conçu pour usage familial sans
+    application Home Assistant.
+
+    - Arrivée: device_tracker passe à 'home' et la porte a changé d'état récemment (ou option de bypass).
+    - Départ: device_tracker passe à 'not_home' et la porte a changé d'état récemment (ou option de bypass).
+    - Anti-faux positifs: délais de confirmation configurables.
+
+  domain: automation
+
+  input:
+    person_entity:
+      name: Personne à mettre à jour
+      description: Entité person.* (Settings → People)
+      selector:
+        entity:
+          domain: person
+
+    tracker_entity:
+      name: Device tracker (UniFi)
+      description: Entité device_tracker.* fournie par l'intégration UniFi Network
+      selector:
+        entity:
+          domain: device_tracker
+
+    door_entity:
+      name: Capteur de porte d'entrée
+      description: Binary sensor d'ouverture (on=open, off=closed)
+      selector:
+        entity:
+          domain: binary_sensor
+
+    door_window_minutes:
+      name: Fenêtre "porte utilisée récemment" (minutes)
+      description: >
+        La porte doit avoir changé d'état dans cette fenêtre pour valider une arrivée/départ.
+        (Le last_changed est mis à jour à l'ouverture ET à la fermeture.)
+      default: 2
+      selector:
+        number:
+          min: 0
+          max: 30
+          step: 1
+          mode: slider
+          unit_of_measurement: min
+
+    confirm_home_seconds:
+      name: Confirmation arrivée (secondes)
+      description: Le tracker doit rester 'home' pendant ce temps pour valider l'évènement.
+      default: 20
+      selector:
+        number:
+          min: 0
+          max: 300
+          step: 5
+          mode: slider
+          unit_of_measurement: s
+
+    confirm_away_minutes:
+      name: Confirmation départ (minutes)
+      description: Le tracker doit rester 'not_home' pendant ce temps pour valider l'évènement.
+      default: 8
+      selector:
+        number:
+          min: 0
+          max: 120
+          step: 1
+          mode: slider
+          unit_of_measurement: min
+
+    allow_arrival_without_door:
+      name: Autoriser une arrivée sans porte
+      description: Si activé, l'arrivée est validée même si la porte n'a pas bougé récemment.
+      default: false
+      selector:
+        boolean:
+
+    allow_departure_without_door:
+      name: Autoriser un départ sans porte
+      description: Si activé, le départ est validé même si la porte n'a pas bougé récemment.
+      default: false
+      selector:
+        boolean:
+
+    arrival_actions:
+      name: Actions supplémentaires à l'arrivée (optionnel)
+      default: []
+      selector:
+        action: {}
+
+    departure_actions:
+      name: Actions supplémentaires au départ (optionnel)
+      default: []
+      selector:
+        action: {}
+
+mode: queued
+max: 10
+
+trigger:
+  - platform: state
+    entity_id: !input tracker_entity
+    to: "home"
+    for:
+      seconds: !input confirm_home_seconds
+
+  - platform: state
+    entity_id: !input tracker_entity
+    to: "not_home"
+    for:
+      minutes: !input confirm_away_minutes
+
+variables:
+  person_entity: !input person_entity
+  tracker_entity: !input tracker_entity
+  door_entity: !input door_entity
+  door_window_minutes: !input door_window_minutes
+  allow_arrival_without_door: !input allow_arrival_without_door
+  allow_departure_without_door: !input allow_departure_without_door
+
+  door_recent: >-
+    {% set w = (door_window_minutes | int(0)) * 60 %}
+    {% if w == 0 %}
+      false
+    {% else %}
+      {% set last = as_timestamp(states[door_entity].last_changed) %}
+      {{ (as_timestamp(now()) - last) <= w }}
+    {% endif %}
+
+action:
+  - choose:
+      # ----- ARRIVÉE -----
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.state == 'home' }}"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ door_recent or allow_arrival_without_door }}"
+                sequence:
+                  - service: person.set_state
+                    data:
+                      entity_id: "{{ person_entity }}"
+                      state: "home"
+                  - sequence: !input arrival_actions
+            default: []
+
+      # ----- DÉPART -----
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.to_state.state == 'not_home' }}"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ door_recent or allow_departure_without_door }}"
+                sequence:
+                  - service: person.set_state
+                    data:
+                      entity_id: "{{ person_entity }}"
+                      state: "not_home"
+                  - sequence: !input departure_actions
+            default: []
