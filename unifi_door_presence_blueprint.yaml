@@ -1,23 +1,21 @@
 blueprint:
-  name: "Présence (UniFi Wi‑Fi + Porte) — 1 personne"
+  name: "Présence (UniFi Wi‑Fi + Porte) — 1 personne (helpers)"
   description: >
-    Met à jour l'état d'une personne (person.*) en se basant sur un device_tracker (UniFi)
-    et la récente activité d'une porte (capteur d'ouverture). Conçu pour usage familial sans
-    application Home Assistant.
+    Détecte l'arrivée/le départ d'une personne à partir d'un device_tracker (UniFi) et d'un capteur de porte,
+    puis met à jour un Helper (input_boolean) pour refléter une présence "confirmée".
 
-    - Arrivée: device_tracker passe à 'home' et la porte a changé d'état récemment (ou option de bypass).
-    - Départ: device_tracker passe à 'not_home' et la porte a changé d'état récemment (ou option de bypass).
-    - Anti-faux positifs: délais de confirmation configurables.
+    Pourquoi un helper ? Les entités person.* ne sont pas pilotables par service : leur état est dérivé des device_trackers.
+    Ce blueprint évite donc person.set_state et fournit une présence fiable exploitable dans tes automations.
 
   domain: automation
 
   input:
-    person_entity:
-      name: Personne à mettre à jour
-      description: Entité person.* (Settings → People)
+    presence_boolean:
+      name: Helper de présence confirmée
+      description: Crée un Helper de type "Interrupteur" (input_boolean) par personne.
       selector:
         entity:
-          domain: person
+          domain: input_boolean
 
     tracker_entity:
       name: Device tracker (UniFi)
@@ -114,7 +112,7 @@ trigger:
       minutes: !input confirm_away_minutes
 
 variables:
-  person_entity: !input person_entity
+  presence_boolean: !input presence_boolean
   tracker_entity: !input tracker_entity
   door_entity: !input door_entity
   door_window_minutes: !input door_window_minutes
@@ -142,10 +140,9 @@ action:
                   - condition: template
                     value_template: "{{ door_recent or allow_arrival_without_door }}"
                 sequence:
-                  - service: person.set_state
-                    data:
-                      entity_id: "{{ person_entity }}"
-                      state: "home"
+                  - service: input_boolean.turn_on
+                    target:
+                      entity_id: !input presence_boolean
                   - sequence: !input arrival_actions
             default: []
 
@@ -159,9 +156,8 @@ action:
                   - condition: template
                     value_template: "{{ door_recent or allow_departure_without_door }}"
                 sequence:
-                  - service: person.set_state
-                    data:
-                      entity_id: "{{ person_entity }}"
-                      state: "not_home"
+                  - service: input_boolean.turn_off
+                    target:
+                      entity_id: !input presence_boolean
                   - sequence: !input departure_actions
             default: []
